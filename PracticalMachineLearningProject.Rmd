@@ -1,0 +1,148 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Alejandro Montoya"
+date: "July 24, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, message=FALSE, warning=FALSE)
+```
+
+# Overview
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. One study made use of the data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants that were asked to perform barbell lifts correctly and incorrectly in 5 different ways. Our objective is to use this data to train a predictive model and then predict the way the lifts were made for a set of 20 observations (testing data set) 
+
+## Loading Data
+
+First, we load the libraries that we need to use for the analysis. We'll be using the caret library for training models and predicting outcomes
+
+``` {r loadingLibraries}
+library(caret); library(rpart); library(randomForest); 
+```
+
+Then, after downloading the training and testing files locally, we read them into data frames.
+
+``` {r loadingData}
+# Loads the training data into a data frame
+trainingData <- read.csv("pml-training.csv", stringsAsFactors = FALSE)
+testingData <- read.csv("pml-testing.csv", stringsAsFactors = FALSE)
+```
+
+## Cleaning Data
+
+After loading the data, we will clean it. First, we'll only keep the variables that are direct measures of the sensors (i.e. we don't take into account all the min, max, amplitude, avg, kurtosis, skewness, standard deviation and variance variables) since they are the ones that provide all the information gain.
+
+``` {r cleaningTrainingData1}
+
+newColNames <- colnames(trainingData[,1:7])
+newColNames <- append(newColNames, colnames(trainingData)[grep('^roll_', colnames(trainingData))])
+newColNames <- append(newColNames, colnames(trainingData)[grep('^pitch_', colnames(trainingData))])
+newColNames <- append(newColNames, colnames(trainingData)[grep('^yaw_', colnames(trainingData))])
+newColNames <- append(newColNames, colnames(trainingData)[grep('^total_', colnames(trainingData))])
+newColNames <- append(newColNames, colnames(trainingData)[grep('^gyros_', colnames(trainingData))])
+newColNames <- append(newColNames, colnames(trainingData)[grep('^accel_', colnames(trainingData))])
+newColNames <- append(newColNames, colnames(trainingData)[grep('^magnet_', colnames(trainingData))])
+newColNames <- append(newColNames, "classe")
+```
+
+Then, we change the variables user_name and new_window into factors, and the cvtd timestamp into POSIXct. We do all this for both, training and testing data sets
+
+``` {r cleaningTrainingData2}
+# Changes character variables user_name and new_window into factors
+trainingData[,"user_name"] <- as.factor(trainingData[,"user_name"])
+trainingData[,"new_window"] <- as.factor(trainingData[,"new_window"])
+
+# Changes the character variable containing the data into a POSIXct variable
+trainingData[,"cvtd_timestamp"] <- as.POSIXct(trainingData[,"cvtd_timestamp"], format="%d/%m/%Y %H:%M")
+
+skimedTrainigData <- trainingData[,newColNames]
+
+# Changes character variables user_name and new_window into factors
+testingData[,"user_name"] <- as.factor(testingData[,"user_name"])
+testingData[,"new_window"] <- as.factor(testingData[,"new_window"])
+
+# Changes the character variable containing the data into a POSIXct variable
+testingData[,"cvtd_timestamp"] <- as.POSIXct(testingData[,"cvtd_timestamp"], format="%d/%m/%Y %H:%M")
+
+skimedTestingData <- testingData[,newColNames[1:59]]
+
+```
+
+Now, we confirm if there are any variables that have more than 5% of missing values.
+
+``` {r cleaningTrainingData3}
+# Gets the variables that have more than 5% of NAs... these variables will add a lot of noise
+# and won't contribute to information gain
+x <- sapply(skimedTrainigData, function(x) {sum(is.na(x)) / length(x)})
+which(x>0.05)
+```
+
+Since there are no variables with more than 5% of missing values, we can keep this data set, after eliminating the first 7 variables that don't contribute much into the information gain
+
+``` {r cleaningTrainingData4}
+# We also take out the first 7 columns as they don't provide any Information Gain
+
+skimedTrainigData <- skimedTrainigData[,c(-1,-2,-3,-4,-5,-6,-7)]
+```
+
+## Splitting Data
+
+By looking at the provided testing data, we can see that this data set won't help us in testing the selected model (only 20 observations without a classification), so we'll split the training data into a training and validation data set (75% vs 25%).
+
+``` {r splittingTrainingData}
+# We'll split the data to obtain a validation data set to help us evaluate the accuracy
+# The training set provided doesn't help us with this
+set.seed(4578)
+inTrain = createDataPartition(skimedTrainigData$classe, p = 3/4)[[1]]
+trainData = skimedTrainigData[ inTrain,]
+validationData = skimedTrainigData[-inTrain,]
+```
+
+## Model Selection
+
+We will be trying 2 different models: Decision Trees and Random Forest. For both models we'll use Cross Validation with 5 folds (i.e. k=5)
+
+### Decision Tree
+
+We start the decision tree model training using the data set cleaned above (i.e. trainData)
+``` {r trainingRPart}
+control <- trainControl(method = "cv", number = 5)
+rpartModelFit <- train(classe ~., data = trainData, method = "rpart", trControl = control)
+rpartModelFit
+```
+
+The training accuracy seems very low (around 52%). Since training is always more optimistic, we would expect to see an even lower accuracy with the validation set. Let's predict with this set and calculate the out of sample error
+
+``` {r validatingRPart}
+rpartPredict <- predict(rpartModelFit, newdata = validationData)
+confusionMatrix(validationData$classe, rpartPredict)
+```
+
+With decision trees we got an accuracy of 50% on the validation data set. It's not good enough
+
+### Random Forest
+
+Since the results for decision trees wasn't good enough, we'll try Random Forest. Again, we'll use Cross Validation with 5 folds
+``` {r trainingRF}
+rfModelFit <- train(classe ~., data = trainData, method = "rf", trControl = control)
+rfModelFit
+```
+
+The accuracy value for Random Forest using training data is 99%. This is very good. Let's see how it does with the validation data set
+
+``` {r validatingRF}
+rfPredict <- predict(rfModelFit, newdata = validationData)
+confusionMatrix(validationData$classe, rfPredict)
+```
+
+With Random Forest, we got an accuracy of 99% on the validation data, very on-par with the accuracy measured against the training set
+
+## Prediction of testing data set
+
+Finally, we apply the best of the 2 models explored, in this case Random Forest, to the testing data set to get our outcome of these 20 observations
+
+``` {r predictingTest}
+testingPredict <- predict(rfModelFit, newdata = skimedTestingData)
+testingPredict
+```
+
